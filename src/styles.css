@@ -1,0 +1,617 @@
+:root {
+  --bg: #f6f6f7;
+  --panel: #ffffff;
+  --text: #16181d;
+  --muted: #6b7280;
+  --line: #e3e5ea;
+  --selected: #e8effc;
+  --selected-line: #3b82f6;
+  --accent: #2563eb;
+  --danger: #dc2626;
+  --expiring: #b45309;
+  --expiring-bg: #fef3c7;
+
+  /* Keep/Scratch chrome tint — deep, desaturated "fine stationery" tones
+     rather than a flat/bright red-blue, so the compose screen reads as
+     unmistakably one or the other without looking like a warning label. */
+  --keep-accent: #8c3f4c;
+  --keep-wash: rgba(140, 63, 76, 0.07);
+  --scratch-accent: #3a4f72;
+  --scratch-wash: rgba(58, 79, 114, 0.06);
+
+  color-scheme: light dark;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181c;
+    --panel: #1e2026;
+    --text: #e8e9ec;
+    --muted: #9299a5;
+    --line: #2c2f37;
+    --selected: #26324a;
+    --selected-line: #60a5fa;
+    --accent: #60a5fa;
+    --danger: #f87171;
+    --expiring: #fbbf24;
+    --expiring-bg: #3f2d0a;
+
+    --keep-accent: #d38a95;
+    --keep-wash: rgba(211, 138, 149, 0.1);
+    --scratch-accent: #8fa8d6;
+    --scratch-wash: rgba(143, 168, 214, 0.1);
+  }
+}
+
+/* Resolves to whichever status is live on the compose screen; anywhere else
+   (search, settings) these fall back to the neutral --accent/--line. */
+.app[data-status="keep"] {
+  --status-accent: var(--keep-accent);
+  --status-wash: var(--keep-wash);
+}
+
+.app[data-status="scratch"] {
+  --status-accent: var(--scratch-accent);
+  --status-wash: var(--scratch-wash);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  /* The window is transparent and undecorated; the panel below paints
+     everything, which is what gives it rounded corners. */
+  background: transparent;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--status-accent, var(--line));
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  transition: border-color 200ms ease;
+}
+
+/* ---------- compose (default, full-screen) ---------- */
+
+.compose {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px;
+  min-height: 0;
+  /* The soft status wash sits behind the (transparent) textarea, so the
+     writing surface itself is visibly tinted without touching text color
+     or contrast. */
+  background: var(--status-wash, transparent);
+  transition: background-color 200ms ease;
+}
+
+.compose-open-title {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--status-accent, var(--muted));
+  letter-spacing: 0.02em;
+}
+
+.compose-input {
+  flex: 1;
+  min-height: 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 4px 0;
+  resize: none;
+}
+
+.compose-find {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--status-accent, var(--line));
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.compose-find-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compose-find-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.compose-find-count {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.compose-find-toggle,
+.compose-find-close {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.compose-find-close {
+  font-size: 15px;
+}
+
+.compose-find-toggle:hover,
+.compose-find-close:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.compose-find-btn {
+  flex: none;
+  font: inherit;
+  font-size: 11.5px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+.compose-find-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.compose-find-btn:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.compose-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--status-accent, var(--line));
+  flex-wrap: wrap;
+}
+
+.compose-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compose-actions {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+
+.compose-save-primary {
+  border-color: var(--status-accent, var(--accent));
+  color: var(--status-accent, var(--accent));
+}
+
+.switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.switch-btn {
+  font: inherit;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.switch-btn-active {
+  background: var(--status-accent, var(--accent));
+  color: white;
+}
+
+.compose-save {
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.compose-save:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------- search screen ---------- */
+
+.search-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.searchbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 0;
+}
+
+.search::placeholder {
+  color: var(--muted);
+}
+
+.chips {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+
+.chip {
+  font: inherit;
+  font-size: 11.5px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+.chip-active {
+  background: var(--selected);
+  border-color: var(--selected-line);
+  color: var(--text);
+}
+
+.gear {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+
+.gear:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ---------- note list ---------- */
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.note-row {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: default;
+}
+
+.note-row:hover {
+  background: var(--bg);
+}
+
+.note-row-selected {
+  background: var(--selected);
+}
+
+.note-row-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.note-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-when {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  flex: none;
+  font-size: 10.5px;
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.badge-expiring {
+  background: var(--expiring-bg);
+  color: var(--expiring);
+}
+
+.note-snippet {
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  white-space: pre-line;
+}
+
+.note-tags {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag-pill {
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--accent);
+  background: var(--selected);
+  border: none;
+  border-radius: 999px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+
+.tag-pill:hover {
+  background: var(--selected-line);
+  color: white;
+}
+
+/* ---------- tag browser (search screen, empty query) ---------- */
+
+.tag-cloud {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tag-cloud-pill {
+  font-size: 11.5px;
+  padding: 3px 9px;
+}
+
+.tag-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-cloud-pill:hover .tag-count {
+  color: inherit;
+}
+
+.note-row-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+
+.row-action {
+  font: inherit;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.row-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.row-action-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* ---------- status bar ---------- */
+
+.status {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.status-right {
+  white-space: nowrap;
+}
+
+/* ---------- settings ---------- */
+
+.settings {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings label > span {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.settings small {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.settings code {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 11px;
+}
+
+.settings input[type="text"],
+.settings input[type="number"] {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.settings input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.settings-inline {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.settings-inline input[type="number"] {
+  width: 90px;
+  margin-left: auto;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-actions button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.settings-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.settings-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}

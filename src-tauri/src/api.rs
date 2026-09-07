@@ -6,8 +6,9 @@
 //! meant to stay frozen — a breaking change adds `/v2/` beside it.
 //!
 //! `GET /v1/notes` reads; `POST /v1/notes` creates one (the recipe engine's
-//! `rnote.create` step). Otherwise near-identical to Rfinder's and Rclip's
-//! `api.rs`: only [`SERVICE_NAME`] and [`route`] differ.
+//! `rnote.create` step); `POST /v1/daily` appends to today's rolling keep note.
+//! Otherwise near-identical to Rfinder's and Rclip's `api.rs`: only
+//! [`SERVICE_NAME`] and [`route`] differ.
 
 use crate::config::Status;
 use crate::notes::search::{apply, Filter};
@@ -199,8 +200,70 @@ fn route(
     match (method, path) {
         ("GET", "/v1/notes") => Ok(notes_endpoint(handle, params)),
         ("POST", "/v1/notes") => create_endpoint(handle, body),
+        ("POST", "/v1/daily") => daily_endpoint(handle, body),
         _ => Err(RouteError::NotFound),
     }
+}
+
+/// `POST /v1/daily { content }` → today's rolling keep note with `content`
+/// appended. One file per day, `keep/YYYY-MM-DD.md`, created on first use with a
+/// `# YYYY-MM-DD` heading and only that heading — later calls just append. Rflow
+/// uses this to log copied links into a single page per day. Returns the note
+/// (a `Note` plus `apiVersion`), same shape as `POST /v1/notes`.
+fn daily_endpoint(handle: &AppHandle, body: &Value) -> Result<String, RouteError> {
+    let content = body
+        .get("content")
+        .or_else(|| body.get("body"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| RouteError::Bad("missing \"content\"".into()))?;
+    if content.trim().is_empty() {
+        return Err(RouteError::Bad("\"content\" is empty".into()));
+    }
+
+    let state = handle.state::<AppState>();
+    let (notes_dir, expiry_days) = {
+        let s = state.config.read();
+        (s.notes_dir.clone(), s.expiry_days)
+    };
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let keep_dir = notes_dir.join(Status::Keep.dirname());
+    let path = keep_dir.join(format!("{date}.md"));
+    std::fs::create_dir_all(&keep_dir).map_err(|e| RouteError::Bad(e.to_string()))?;
+
+    // Build the whole file body: the date heading once, one blank line between
+    // entries, and `content` as the newest.
+    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    if text.is_empty() {
+        text.push_str(&format!("# {date}\n\n"));
+    } else {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        if !text.ends_with("\n\n") {
+            text.push('\n');
+        }
+    }
+    text.push_str(content.trim_end_matches('\n'));
+    text.push('\n');
+    std::fs::write(&path, &text).map_err(|e| RouteError::Bad(e.to_string()))?;
+
+    let note = crate::notes::scan::scan_one(&path, Status::Keep, expiry_days)
+        .map_err(|e| RouteError::Bad(e.to_string()))?;
+    {
+        let mut notes = state.notes.write();
+        if let Some(slot) = notes.iter_mut().find(|n| n.filename == note.filename) {
+            *slot = note.clone();
+        } else {
+            notes.push(note.clone());
+        }
+        notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    }
+
+    let mut value = serde_json::to_value(&note).unwrap_or(Value::Null);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("apiVersion".to_string(), Value::from(API_VERSION));
+    }
+    Ok(value.to_string())
 }
 
 fn read_json_body(request: &mut Request) -> Value {

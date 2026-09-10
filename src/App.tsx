@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import ComposeBox from "./components/ComposeBox";
 import SearchView from "./components/SearchView";
 import SettingsPanel from "./components/SettingsPanel";
@@ -21,6 +22,15 @@ type View = "compose" | "search" | "settings";
 
 /** A courtesy debounce on top of an already-cheap in-memory backend search. */
 const DEBOUNCE_MS = 120;
+
+/** The window has no title bar (decorations are off), so instead it can be
+ *  dragged from anywhere: press and hold still for this long and the pointer
+ *  grabs the window. A normal click, or any press that moves, releases well
+ *  before this fires and is left alone. */
+const WINDOW_DRAG_HOLD_MS = 50;
+/** Pointer travel (px) after mousedown that cancels a pending window drag —
+ *  that motion means "select text" / "drag a thing", not "move the window". */
+const WINDOW_DRAG_CANCEL_PX = 6;
 
 /** How long compose typing must pause before it's autosaved to disk — short
  *  enough to feel immediate, long enough to not write on every keystroke.
@@ -266,6 +276,52 @@ export default function App() {
     [openFilename, resetToBlank, refresh, flash],
   );
 
+  // ---------- window drag (press-and-hold, no title bar) ----------
+
+  const dragHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragPressAt = useRef<{ x: number; y: number } | null>(null);
+
+  const cancelWindowDrag = useCallback(() => {
+    if (dragHoldTimer.current) {
+      clearTimeout(dragHoldTimer.current);
+      dragHoldTimer.current = null;
+    }
+    dragPressAt.current = null;
+  }, []);
+
+  const onWindowMouseDown = useCallback((e: React.MouseEvent) => {
+    // Left button only, and never off a control the press already means
+    // something on: the editor and search box (a hold there is text
+    // selection), buttons/links (a hold there is still just a click). That
+    // leaves the chrome — the title strip, toolbar, list-row gaps — as the
+    // grab surface, the way a real title bar would be.
+    if (e.button !== 0) return;
+    if (
+      (e.target as HTMLElement).closest(
+        'textarea, input, select, a, button, [contenteditable="true"]',
+      )
+    ) {
+      return;
+    }
+    dragPressAt.current = { x: e.clientX, y: e.clientY };
+    dragHoldTimer.current = setTimeout(() => {
+      dragHoldTimer.current = null;
+      dragPressAt.current = null;
+      getCurrentWindow().startDragging().catch(() => {});
+    }, WINDOW_DRAG_HOLD_MS);
+  }, []);
+
+  const onWindowMouseMove = useCallback((e: React.MouseEvent) => {
+    const origin = dragPressAt.current;
+    if (!origin || !dragHoldTimer.current) return;
+    if (
+      Math.abs(e.clientX - origin.x) > WINDOW_DRAG_CANCEL_PX ||
+      Math.abs(e.clientY - origin.y) > WINDOW_DRAG_CANCEL_PX
+    ) {
+      cancelWindowDrag();
+    }
+  }, [cancelWindowDrag]);
+
   // ---------- keyboard ----------
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -298,7 +354,15 @@ export default function App() {
     // editing the wrong one is obvious at a glance rather than only
     // discoverable by reading the small switch. Search/settings stay neutral
     // — there's no single "current status" while browsing.
-    <div className="app" data-status={view === "compose" ? composeStatus : undefined} onKeyDown={onKeyDown}>
+    <div
+      className="app"
+      data-status={view === "compose" ? composeStatus : undefined}
+      onKeyDown={onKeyDown}
+      onMouseDown={onWindowMouseDown}
+      onMouseMove={onWindowMouseMove}
+      onMouseUp={cancelWindowDrag}
+      onMouseLeave={cancelWindowDrag}
+    >
       {view === "compose" && (
         <ComposeBox
           value={composeBody}

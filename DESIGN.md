@@ -170,8 +170,39 @@ Rustのバイト位置とJSのUTF-16インデックスはズレるため、オ�
       dev環境へホットリロードでエラーなく反映済み。
 - [x] Phase 4: Keep/Scratch誤認防止の配色（ワインレッド/濃紺）。`vite build`通過、dev環境へ
       ホットリロードでエラーなく反映済み。
+- [x] Phase 5（v0.2.0）:
+  - **タイトルは常に本文1行目から再計算**（`scan.rs` の `title_of`）。以前はファイル名スラッグを
+    優先していたため、作成後に1行目を書き換えても（例: 最初に `#` だけ保存 → 後から見出しを
+    追記）タイトルが固定されたままだった。ファイル名スラッグは従来どおり作成時に確定・不変
+    （`title_of` は `filename` を受け取らなくなった。`SEPARATOR` import も削除）。
+  - **検索一覧のスニペットから1行目を除外**（`mod.rs` の `snippet_of`）。1行目＝タイトルは行内に
+    別途表示しているため重複を避ける。タイトルのみのメモはスニペット空 → 行には `(空)` 表示。
+  - **ウィンドウの長押しドラッグ**（`App.tsx`）。装飾なしウィンドウなのでタイトルバーがない。
+    `.app` ルートで mousedown → `WINDOW_DRAG_HOLD_MS`(100ms) 静止でホールド判定し
+    `getCurrentWindow().startDragging()`。`WINDOW_DRAG_CANCEL_PX`(6px) 動いたら取り消し
+    （テキスト選択と区別）。**`textarea`/`input`/`select`/`a`/`button`/`[contenteditable]` 上は
+    除外**（その上での長押しは選択やクリックの意味を持つため）。結果、掴めるのはクロム部分＝
+    compose の見出し行（`.compose-open-title`、`cursor: grab` と余白を付与）・ツールバー・
+    一覧の行間など。権限 `core:window:allow-start-dragging` は既存。
+  - バージョンを `0.1.0` → `0.2.0`（`package.json` / `tauri.conf.json` / `Cargo.toml` /
+    `Cargo.lock`）。`api.rs` の `appVersion` は `env!("CARGO_PKG_VERSION")` なので自動追従、
+    `API_VERSION`(ローカルHTTP APIの版) は 1 のまま。
+  - 自動チェック: `cargo check` / `cargo test`(5 passed) / `tsc --noEmit` / `vite build` 全通過。
+
+## デバイス間同期（Google ドライブ方式・v0.2.0 で方針確定）
+
+- **方式: 保存フォルダを Google ドライブ内に置き、同期は Google ドライブ デスクトップに任せる。**
+  Rnote 側はコード変更なし（既存の「メモの保存フォルダ」設定を使うだけ）。OAuth なし・rclone なし。
+- 7日トークン失効・審査（CASA）などの問題は「Rnote が Google API を一切叩かない」ことで丸ごと回避。
+- 手順書は `GOOGLE-DRIVE-SYNC.md`（ミラーリングモード必須、競合は両方残す穏やかな degrade、
+  config.json はデバイス固有で同期対象外、監視取りこぼし時は再起動で全スキャン、など）。
+- 検討して**やらなかった**案: rclone バイナリ同梱（+20MB・自前OAuth UI が必要）、
+  Drive REST API を Rust から直接（双方向同期＋競合解決の自作が重い）。
+- 任意の小改善（未実装）: 設定画面に Drive フォルダのヒント/ワンクリック入力、一覧の手動再スキャン。
 
 ## 次にやること（再開時にまずここを見る）
+
+- 特になし（Phase 5 まで完了、Drive 同期は方針確定・手順書あり）。
 
 - Phase 2 step 7 の残り: ユーザー自身が触って、DESIGN.md記載の挙動（特にCtrl+S/Ctrl+Enterの
   一時保存⇄保存して閉じるの違い、検索→compose復元時のカーソル位置、Escapeの段階的な戻り方、

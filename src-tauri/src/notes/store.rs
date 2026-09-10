@@ -15,9 +15,10 @@ pub fn create(settings: &Settings, body: &str, status: Status) -> std::io::Resul
     scan::scan_one(&dir.join(&filename), status, settings.expiry_days)
 }
 
-/// Overwrites the file in place. The filename never changes, even if the
-/// first line — and so the title a fresh note would have used for its slug
-/// — changes with it.
+/// Overwrites the file in place. The *filename* never changes, even if the
+/// first line changes with it — only the slug a brand-new note would have
+/// used is frozen. The displayed title is re-derived from the first line on
+/// every scan (see `scan::title_of`), so it does follow the edit.
 pub fn update(
     settings: &Settings,
     filename: &str,

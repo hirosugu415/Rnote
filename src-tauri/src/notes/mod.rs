@@ -65,9 +65,19 @@ impl Note {
 
 const SNIPPET_LIMIT: usize = 200;
 
-/// Whitespace-collapsed first ~200 characters, for the list row.
+/// Whitespace-collapsed first ~200 characters of the body *after* its first
+/// non-empty line. That line is the note's title, shown on its own in the
+/// list row, so repeating it here would just waste the row's two snippet
+/// lines. A note that is nothing but a title yields an empty snippet.
 fn snippet_of(body: &str) -> String {
-    let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut lines = body.lines();
+    for line in lines.by_ref() {
+        if !line.trim().is_empty() {
+            break; // consume the title line; the rest is the snippet
+        }
+    }
+    let rest = lines.collect::<Vec<_>>().join("\n");
+    let collapsed = rest.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() <= SNIPPET_LIMIT {
         collapsed
     } else {

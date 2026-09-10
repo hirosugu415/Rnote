@@ -1,7 +1,7 @@
 //! Scans `keep/` and `scratch/` into `Note`s. No recursion — storage is
 //! deliberately flat, so this is one `read_dir` per status.
 
-use super::naming::{SEPARATOR, TIMESTAMP_FORMAT};
+use super::naming::TIMESTAMP_FORMAT;
 use super::{tags, Note};
 use crate::config::{Settings, Status};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
@@ -22,20 +22,16 @@ fn parse_filename_timestamp(filename: &str) -> Option<DateTime<Local>> {
     Local.from_local_datetime(&naive).single()
 }
 
-fn title_of(filename: &str, body: &str) -> String {
-    // The slug half of our own naming convention, if there is one, past the
-    // timestamp and its separator.
-    if let Some(stem) = filename.strip_suffix(".md") {
-        if let Some(rest) = stem.get(STAMP_LEN + SEPARATOR.len()..) {
-            if !rest.is_empty() {
-                return rest.to_string();
-            }
-        }
-    }
+/// The note's display title: always its first non-empty line, re-derived on
+/// every scan so it tracks edits to that line. The filename slug is frozen at
+/// creation and deliberately *not* used here — otherwise a note whose first
+/// line changed later (or one first saved while that line was just `#`) would
+/// keep a stale title forever.
+fn title_of(body: &str) -> String {
     body.lines()
-        .find(|l| !l.trim().is_empty())
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
         .unwrap_or_else(|| "(無題)".to_string())
 }
 
@@ -58,7 +54,7 @@ pub(crate) fn scan_one(path: &Path, status: Status, expiry_days: u32) -> std::io
         && Local::now().signed_duration_since(created_at).num_days() >= expiry_days as i64;
 
     Ok(Note {
-        title: title_of(&filename, &body),
+        title: title_of(&body),
         char_count: body.chars().count(),
         filename,
         status,

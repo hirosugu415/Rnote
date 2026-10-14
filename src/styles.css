@@ -106,11 +106,23 @@ body,
   font-weight: 600;
   color: var(--status-accent, var(--muted));
   letter-spacing: 0.02em;
-  /* Doubles as the window's drag handle (the editor below is excluded so a
-     hold there still selects text) — give it a little height and the cursor
-     to match. */
+  /* Doubles as the window's drag handle (`data-drag-region`, see App.tsx)
+     — give it a little height and the cursor to match. */
   padding: 3px 0 5px;
   cursor: grab;
+}
+
+/* The search/settings counterpart of `.compose-open-title`: the strip along
+   the top that is the only place the window can be dragged from. */
+.view-title {
+  flex: none;
+  padding: 6px 14px 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  cursor: grab;
+  user-select: none;
 }
 
 .compose-input {
@@ -407,6 +419,14 @@ body,
   color: var(--expiring);
 }
 
+/* Search terms inside result titles/snippets. */
+.note-row mark {
+  color: inherit;
+  background: rgba(250, 204, 21, 0.35);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .note-snippet {
   margin-top: 3px;
   font-size: 12.5px;
@@ -466,6 +486,109 @@ body,
 
 .tag-cloud-pill:hover .tag-count {
   color: inherit;
+}
+
+.tag-cloud-more {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 9px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.tag-cloud-more:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.tag-cloud-edit {
+  margin-left: auto;
+}
+
+.tag-cloud-editing .tag-cloud-pill {
+  outline: 1px dashed var(--selected-line);
+}
+
+.tag-edit-mark {
+  opacity: 0.7;
+}
+
+.tag-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.tag-rename-hash {
+  color: var(--accent);
+}
+
+.tag-rename-input {
+  font: inherit;
+  width: 10em;
+  padding: 2px 6px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--selected-line);
+  border-radius: 999px;
+  outline: none;
+}
+
+.tag-rename-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tag-rename-error {
+  color: var(--danger);
+}
+
+/* ---------- `#` completion popup (compose) ---------- */
+
+.compose {
+  position: relative;
+}
+
+.tag-suggest {
+  position: absolute;
+  z-index: 10;
+  min-width: 160px;
+  max-width: 280px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--status-accent, var(--line));
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+.tag-suggest-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tag-suggest-item-active {
+  background: var(--selected);
+  color: var(--accent);
+}
+
+.tag-suggest-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .note-row-actions {
@@ -619,4 +742,177 @@ body,
   color: var(--muted);
   font-size: 11.5px;
   line-height: 1.5;
+}
+
+/* ---------- scratch triage ---------- */
+
+.triage-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.triage-open-count {
+  min-width: 16px;
+  padding: 0 5px;
+  font-size: 10.5px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--expiring);
+  background: var(--expiring-bg);
+  border-radius: 999px;
+}
+
+.triage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  outline: none;
+  background: var(--status-wash, transparent);
+}
+
+.triage-title {
+  display: flex;
+  justify-content: space-between;
+  color: var(--status-accent, var(--muted));
+}
+
+.triage-progress {
+  font-variant-numeric: tabular-nums;
+}
+
+.triage-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 14px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.triage-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 12px 14px 8px;
+}
+
+.triage-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.triage-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triage-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.triage-body {
+  flex: 1;
+  min-height: 0;
+  margin-top: 6px;
+  padding: 8px 10px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.6;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.triage-message {
+  flex: none;
+  padding: 0 14px 6px;
+  font-size: 11.5px;
+  color: var(--expiring);
+}
+
+.triage-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.triage-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.triage-btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.triage-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.triage-btn kbd {
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 0 4px;
+  margin-right: 3px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel);
+}
+
+.triage-keep {
+  color: var(--keep-accent);
+  border-color: var(--keep-accent);
+}
+
+.triage-trash {
+  color: var(--danger);
+}
+
+.triage-done {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.triage-done-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.triage-done-counts {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.triage-done .triage-actions {
+  border-top: none;
+  justify-content: center;
 }

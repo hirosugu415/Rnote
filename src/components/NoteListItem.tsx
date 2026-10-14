@@ -11,6 +11,29 @@ interface Props {
   onToggleStatus: () => void;
   onDelete: () => void;
   onTagClick: (tag: string) => void;
+  /** Search terms to mark in the title and snippet. */
+  highlight: string[];
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** `text` with every case-insensitive occurrence of `terms` wrapped in
+ *  <mark>, so a result shows at a glance why it matched. */
+function Highlight({ text, terms }: { text: string; terms: string[] }) {
+  if (terms.length === 0 || !text) return <>{text}</>;
+  // Longest first, so `rust-lang` wins over `rust` where both match.
+  const pattern = [...terms].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|");
+  const parts = text.split(new RegExp(`(${pattern})`, "giu"));
+  return (
+    <>
+      {parts.map((part, i) =>
+        // split() with one capture group puts the matches at odd indexes.
+        i % 2 === 1 ? <mark key={i}>{part}</mark> : part,
+      )}
+    </>
+  );
 }
 
 export default function NoteListItem({
@@ -20,6 +43,7 @@ export default function NoteListItem({
   onToggleStatus,
   onDelete,
   onTagClick,
+  highlight,
 }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -44,14 +68,21 @@ export default function NoteListItem({
   };
 
   return (
-    <div className={selected ? "note-row note-row-selected" : "note-row"} onClick={onOpen}>
+    <div
+      className={selected ? "note-row note-row-selected" : "note-row"}
+      onClick={onOpen}
+    >
       <div className="note-row-header">
-        <span className="note-title">{note.title}</span>
+        <span className="note-title">
+          <Highlight text={note.title} terms={highlight} />
+        </span>
         {note.isExpiring && <span className="badge badge-expiring">まもなく期限切れ</span>}
         <span className="note-when">{formatWhen(note.modifiedAt)}</span>
       </div>
 
-      <div className="note-snippet">{note.snippet || "(空)"}</div>
+      <div className="note-snippet">
+        {note.snippet ? <Highlight text={note.snippet} terms={highlight} /> : "(空)"}
+      </div>
 
       {note.tags.length > 0 && (
         <div className="note-tags">
@@ -87,7 +118,7 @@ export default function NoteListItem({
           className={confirmDelete ? "row-action row-action-danger" : "row-action"}
           onClick={handleDeleteClick}
         >
-          {confirmDelete ? "もう一度クリックで削除" : "削除"}
+          {confirmDelete ? "もう一度クリックでゴミ箱へ" : "削除"}
         </button>
       </div>
     </div>

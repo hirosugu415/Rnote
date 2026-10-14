@@ -28,6 +28,7 @@ chrono = { version = "0.4", features = ["clock"] }
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
 ] }
 # `Window::hwnd()` returns this crate's HWND (not windows-sys's) — same
 # representation, different type, so both crates are needed side by side.

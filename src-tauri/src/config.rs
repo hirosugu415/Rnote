@@ -48,7 +48,16 @@ pub struct Settings {
     pub api_port: u16,
     /// Spaces inserted/removed per Ctrl+]/Ctrl+[ level in the compose box.
     pub indent_width: u32,
+    /// Launch (hidden, in the tray) when Windows signs in. On by default —
+    /// a capture tool is only useful if it's already running.
+    pub autostart: bool,
+    /// UI zoom (1.0 = 100%), changed with Ctrl +/-/0 and Ctrl+wheel.
+    pub zoom: f64,
 }
+
+/// Bounds of the zoom the UI offers.
+pub const ZOOM_MIN: f64 = 0.5;
+pub const ZOOM_MAX: f64 = 2.5;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -63,6 +72,8 @@ impl Default for Settings {
             api_enabled: true,
             api_port: DEFAULT_API_PORT,
             indent_width: 4,
+            autostart: true,
+            zoom: 1.0,
         }
     }
 }
@@ -95,6 +106,30 @@ pub fn load() -> Settings {
         }),
         Err(_) => Settings::default(),
     }
+}
+
+/// Where the window last was, in physical pixels — kept in its own file
+/// beside `config.json` because it changes on every move, not on purpose.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct WindowGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+fn window_geometry_path() -> PathBuf {
+    data_dir().join("window.json")
+}
+
+pub fn load_window_geometry() -> Option<WindowGeometry> {
+    let text = std::fs::read_to_string(window_geometry_path()).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn save_window_geometry(geometry: &WindowGeometry) -> std::io::Result<()> {
+    std::fs::create_dir_all(data_dir())?;
+    std::fs::write(window_geometry_path(), serde_json::to_string(geometry)?)
 }
 
 pub fn save(settings: &Settings) -> std::io::Result<()> {

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { extractTags, type Status } from "../api";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { extractTags, isTagChar, type Status, type TagCount } from "../api";
 
 interface Props {
   value: string;
@@ -23,6 +23,60 @@ interface Props {
   onTagClick: (tag: string) => void;
   /** Spaces per indent level for Ctrl+]/Ctrl+[. */
   indentWidth: number;
+  /** Existing tags offered as completions after typing `#`, most used first. */
+  allTags: TagCount[];
+}
+
+/** Most completions shown at once. */
+const SUGGEST_LIMIT = 8;
+
+/** The `#tag` being typed at `caret`, if any: the caret sits at the end of a
+ *  run of tag characters directly preceded by a `#` that starts a word —
+ *  the same rule `extractTags` uses to recognise a tag. `partial` may be
+ *  empty (just typed `#`). */
+function tagTrigger(value: string, caret: number): { hash: number; partial: string } | null {
+  let i = caret;
+  while (i > 0 && isTagChar(value[i - 1])) i--;
+  if (i === 0 || value[i - 1] !== "#") return null;
+  const hash = i - 1;
+  if (hash > 0 && isTagChar(value[hash - 1])) return null;
+  if (caret < value.length && isTagChar(value[caret])) return null;
+  return { hash, partial: value.slice(i, caret) };
+}
+
+/** Styles that decide where text wraps, copied onto the measuring mirror. */
+const MIRROR_PROPS = [
+  "boxSizing", "width", "borderTopWidth", "borderRightWidth", "borderBottomWidth",
+  "borderLeftWidth", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+  "fontStyle", "fontVariant", "fontWeight", "fontStretch", "fontSize", "lineHeight",
+  "fontFamily", "letterSpacing", "wordSpacing", "tabSize", "textIndent", "textTransform",
+] as const;
+
+/** Pixel position of character `pos` inside the textarea's content (before
+ *  scrolling), found by laying the text out in a hidden copy of the box —
+ *  textareas have no API for caret coordinates. */
+function caretCoords(el: HTMLTextAreaElement, pos: number) {
+  const style = getComputedStyle(el);
+  const mirror = document.createElement("div");
+  for (const prop of MIRROR_PROPS) mirror.style[prop] = style[prop];
+  mirror.style.position = "absolute";
+  mirror.style.visibility = "hidden";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.overflowWrap = "break-word";
+  mirror.style.overflow = "hidden";
+  mirror.style.width = `${el.clientWidth + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth)}px`;
+  mirror.textContent = el.value.slice(0, pos);
+  const marker = document.createElement("span");
+  marker.textContent = "\u200b";
+  mirror.appendChild(marker);
+  document.body.appendChild(mirror);
+  const coords = {
+    top: marker.offsetTop,
+    left: marker.offsetLeft,
+    height: parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6,
+  };
+  document.body.removeChild(mirror);
+  return coords;
 }
 
 /** Start/end of the line(s) fully spanning `[start, end]`, VSCode-style —
@@ -200,6 +254,7 @@ export default function ComposeBox({
   pendingSelection,
   onTagClick,
   indentWidth,
+  allTags,
 }: Props) {
   const textRef = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
@@ -317,9 +372,7 @@ export default function ComposeBox({
     }
     const newValue = value.slice(0, selStart) + replaceText + value.slice(selEnd);
     const newPos = selStart + replaceText.length;
-    el.value = newValue;
-    el.setSelectionRange(newPos, newPos);
-    onChange(newValue);
+    applyEdit({ newValue, newStart: newPos, newEnd: newPos });
     jumpForward(newPos, findQuery, newValue);
   };
 
@@ -327,12 +380,7 @@ export default function ComposeBox({
     if (!findQuery) return;
     const { newValue, count } = replaceAllOccurrences(value, findQuery, replaceText);
     if (count === 0) return;
-    const el = textRef.current;
-    if (el) {
-      el.value = newValue;
-      el.setSelectionRange(0, 0);
-    }
-    onChange(newValue);
+    applyEdit({ newValue, newStart: 0, newEnd: 0 });
   };
 
   useEffect(() => {
@@ -350,30 +398,191 @@ export default function ComposeBox({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadToken]);
 
-  // Programmatic edits (indent/outdent/move-line) write the DOM node directly
-  // before calling onChange: React skips resetting an input's selection when
-  // the incoming value already matches the node's current value, so setting
-  // both here up front is what keeps the caret from jumping to the end.
+  // Programmatic edits (indent/outdent/move-line/replace) go through
+  // `execCommand("insertText")` when the textarea has focus: unlike assigning
+  // `el.value`, that lands on the browser's native undo stack, so Ctrl+Z
+  // reverts the edit in one step instead of the history being wiped. Only
+  // the span that actually differs is replaced, keeping the undo step tight.
+  // Without focus (replace clicked from the find bar — see the note on
+  // `scrollMatchIntoView` for why we don't steal it) or if the command is
+  // unavailable, falls back to writing the DOM node directly before
+  // onChange: React skips resetting an input's selection when the incoming
+  // value already matches the node's, which keeps the caret in place.
   const applyEdit = (edit: { newValue: string; newStart: number; newEnd: number } | null) => {
     if (!edit) return;
     const el = textRef.current;
-    if (el) {
-      el.value = edit.newValue;
-      el.setSelectionRange(edit.newStart, edit.newEnd);
+    if (!el) {
+      onChange(edit.newValue);
+      return;
     }
-    onChange(edit.newValue);
+    const old = el.value;
+    const next = edit.newValue;
+    if (document.activeElement === el && old !== next) {
+      let prefix = 0;
+      const maxPrefix = Math.min(old.length, next.length);
+      while (prefix < maxPrefix && old[prefix] === next[prefix]) prefix++;
+      let suffix = 0;
+      const maxSuffix = maxPrefix - prefix;
+      while (
+        suffix < maxSuffix &&
+        old[old.length - 1 - suffix] === next[next.length - 1 - suffix]
+      ) {
+        suffix++;
+      }
+      el.setSelectionRange(prefix, old.length - suffix);
+      const inserted = next.slice(prefix, next.length - suffix);
+      const ok = inserted
+        ? document.execCommand("insertText", false, inserted)
+        : document.execCommand("delete", false);
+      if (ok && el.value === next) {
+        el.setSelectionRange(edit.newStart, edit.newEnd);
+        onChange(next);
+        return;
+      }
+    }
+    el.value = next;
+    el.setSelectionRange(edit.newStart, edit.newEnd);
+    onChange(next);
+  };
+
+  // ---------- `#` tag completion ----------
+  // Typing `#` (optionally followed by the start of a name) offers the tags
+  // already in use, so the same topic doesn't splinter into near-duplicate
+  // tags you forgot you had. Prefix matches first, then substring matches,
+  // each group most-used first (the order `allTags` arrives in).
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [sel, setSel] = useState({ start: 0, end: 0 });
+  const [focused, setFocused] = useState(false);
+  const [suggestIndex, setSuggestIndex] = useState(0);
+  /** `#` position whose popup was closed (Esc / accepted) — stays closed
+   *  until the caret leaves that tag. */
+  const [dismissedHash, setDismissedHash] = useState<number | null>(null);
+  const [popupPos, setPopupPos] = useState<React.CSSProperties | null>(null);
+  /** Bumped on textarea scroll, so the popup re-anchors to the moved caret. */
+  const [scrollTick, setScrollTick] = useState(0);
+
+  const syncSel = () => {
+    const el = textRef.current;
+    if (el) setSel({ start: el.selectionStart, end: el.selectionEnd });
+  };
+
+  const trigger = sel.start === sel.end ? tagTrigger(value, sel.start) : null;
+
+  const suggestions = useMemo(() => {
+    if (!trigger || !focused || trigger.hash === dismissedHash) return [];
+    const p = trigger.partial.toLowerCase();
+    const prefix: TagCount[] = [];
+    const contains: TagCount[] = [];
+    for (const t of allTags) {
+      const lower = t.tag.toLowerCase();
+      if (lower.startsWith(p)) prefix.push(t);
+      else if (lower.includes(p)) contains.push(t);
+    }
+    const list = [...prefix, ...contains].slice(0, SUGGEST_LIMIT);
+    // Already typed in full and nothing longer to offer: nothing to say.
+    if (list.length === 1 && list[0].tag === trigger.partial) return [];
+    return list;
+  }, [trigger?.hash, trigger?.partial, focused, dismissedHash, allTags]);
+
+  const open = suggestions.length > 0;
+
+  useEffect(() => {
+    setSuggestIndex(0);
+    if (dismissedHash !== null && trigger?.hash !== dismissedHash) setDismissedHash(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trigger?.hash, trigger?.partial]);
+
+  // Anchor the popup just under the caret, flipping above it when there's
+  // no room below, and kept inside the compose area horizontally.
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    const box = containerRef.current;
+    if (!open || !el || !box || !trigger) {
+      setPopupPos(null);
+      return;
+    }
+    const c = caretCoords(el, trigger.hash);
+    const lineTop = el.offsetTop + c.top - el.scrollTop;
+    const left = Math.max(8, Math.min(el.offsetLeft + c.left, box.clientWidth - 200));
+    const below = lineTop + c.height + 2;
+    setPopupPos(
+      below + 240 <= box.clientHeight
+        ? { left, top: below }
+        : { left, bottom: box.clientHeight - lineTop + 2 },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, trigger?.hash, value, scrollTick]);
+
+  const acceptSuggestion = (tag: string) => {
+    const el = textRef.current;
+    if (!el || !trigger) return;
+    const start = trigger.hash + 1;
+    const end = sel.start;
+    const next = value[end];
+    // A trailing space ends the tag, so the next word isn't glued onto it.
+    const insert = next === undefined || !/\s/.test(next) ? `${tag} ` : tag;
+    const caret = start + insert.length;
+    applyEdit({
+      newValue: value.slice(0, start) + insert + value.slice(end),
+      newStart: caret,
+      newEnd: caret,
+    });
+    setDismissedHash(trigger.hash);
+    syncSel();
+  };
+
+  /** Keys the open popup claims; returns true when it handled the event. */
+  const handleSuggestKeys = (e: React.KeyboardEvent): boolean => {
+    if (!open || !trigger || e.altKey || e.ctrlKey || e.metaKey) return false;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setSuggestIndex((i) => (i + step + suggestions.length) % suggestions.length);
+      return true;
+    }
+    // While the popup is showing, Enter always picks the highlighted tag —
+    // a newline there would read as the popup ignoring you. (Esc first if a
+    // newline is really what you want.)
+    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+      e.preventDefault();
+      acceptSuggestion(suggestions[suggestIndex].tag);
+      return true;
+    }
+    if (e.key === "Escape") {
+      // Closing the popup is this Escape's whole job — don't also let App
+      // treat it as "leave this note".
+      e.preventDefault();
+      e.stopPropagation();
+      setDismissedHash(trigger.hash);
+      return true;
+    }
+    return false;
   };
 
   return (
-    <div className="compose">
-      <div className="compose-open-title">{openTitle ? `編集中: ${openTitle}` : "新規メモ"}</div>
+    <div className="compose" ref={containerRef}>
+      <div className="compose-open-title" data-drag-region>
+        {openTitle ? `編集中: ${openTitle}` : "新規メモ"}
+      </div>
       <textarea
         ref={textRef}
         id="compose-input"
         className="compose-input"
         placeholder="なにか書く…"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setSel({ start: e.target.selectionStart, end: e.target.selectionEnd });
+        }}
+        onSelect={syncSel}
+        onFocus={() => {
+          setFocused(true);
+          syncSel();
+        }}
+        onBlur={() => setFocused(false)}
+        onScroll={() => {
+          if (open) setScrollTick((t) => t + 1);
+        }}
         onCompositionStart={() => {
           composing.current = true;
         }}
@@ -382,6 +591,7 @@ export default function ComposeBox({
         }}
         onKeyDown={(e) => {
           if (composing.current || e.nativeEvent.isComposing) return;
+          if (handleSuggestKeys(e)) return;
           if (e.ctrlKey && (e.key === "s" || e.key === "S")) {
             e.preventDefault();
             onSaveDraft();
@@ -530,6 +740,28 @@ export default function ComposeBox({
             </div>
           )}
         </div>
+      )}
+      {open && popupPos && (
+        <ul className="tag-suggest" style={popupPos} role="listbox">
+          {suggestions.map((t, i) => (
+            <li
+              key={t.tag}
+              role="option"
+              aria-selected={i === suggestIndex}
+              className={i === suggestIndex ? "tag-suggest-item tag-suggest-item-active" : "tag-suggest-item"}
+              // mousedown, not click, and preventDefault: the textarea must
+              // keep focus or the popup (and the insert target) would vanish.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                acceptSuggestion(t.tag);
+              }}
+              onMouseEnter={() => setSuggestIndex(i)}
+            >
+              <span className="tag-suggest-name">#{t.tag}</span>
+              <span className="tag-count">{t.count}</span>
+            </li>
+          ))}
+        </ul>
       )}
       {liveTags.length > 0 && (
         <div className="note-tags">

@@ -1,83 +1,108 @@
-//! Filename generation: a timestamp plus a slug from the first line, decided
-//! once at creation and never revisited afterwards — Explorer's sort order,
-//! and the `created_at` scan.rs derives from this same prefix, both depend
-//! on the name staying stable even if the note's content changes later.
+//! Filename generation: the note's title (its first line, heading marker
+//! stripped) as a Windows-safe name — `買い物.md`. Re-derived on every save
+//! (see `store::update`), so the file in Explorer always reads like the note.
+//!
+//! Older notes were named `YYYY-MM-DD_HHmm - slug.md`; `scan.rs` still parses
+//! that prefix for `created_at`, and such a file is renamed to the new scheme
+//! the next time it is saved.
 
-use chrono::{DateTime, Local};
 use std::path::Path;
 
-const SLUG_MAX: usize = 40;
+/// Characters short enough to keep long first lines from making unwieldy
+/// paths, long enough to tell notes apart at a glance.
+const NAME_MAX: usize = 60;
 const ILLEGAL: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+/// Device names Windows refuses as a file stem, whatever the extension.
+const RESERVED: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+/// Stem used when the body has no title line yet.
+const UNTITLED: &str = "無題";
 
-/// Separates the timestamp from the slug. Kept as a named constant since
-/// `scan.rs` has to parse back past exactly this many bytes.
-pub(crate) const SEPARATOR: &str = " - ";
-/// `strftime` pattern for the timestamp half of the name — minute
-/// resolution is plenty for something a human reads in Explorer, and
-/// `scan.rs` mirrors this exact pattern when parsing it back.
+/// `strftime` pattern of the legacy timestamp prefix — no longer written,
+/// only parsed back by `scan.rs` for notes created before the rename.
 pub(crate) const TIMESTAMP_FORMAT: &str = "%Y-%m-%d_%H%M";
 
-/// Builds e.g. `2026-08-26_1430 - buy milk.md`, avoiding a collision with
-/// anything already in `dir` — two captures inside the same minute are
-/// common at this resolution, not an edge case.
-pub fn generate(body: &str, when: DateTime<Local>, dir: &Path) -> String {
-    let stamp = when.format(TIMESTAMP_FORMAT).to_string();
-    let slug = slugify(first_line(body));
-    let base = if slug.is_empty() { stamp } else { format!("{stamp}{SEPARATOR}{slug}") };
+/// The filename `body` should have: `<title>.md`, or `<title> (2).md`… when
+/// that name is taken in any of `dirs`. Names are kept unique across keep/
+/// and scratch/ together, because the app identifies a note by filename
+/// alone. `current` is the note's existing name, if any — it never counts as
+/// a collision with itself (so an unchanged title keeps its name, and a
+/// case-only change like `abc` → `ABC` doesn't pick up a suffix on
+/// case-insensitive NTFS).
+pub fn generate(body: &str, dirs: &[&Path], current: Option<&str>) -> String {
+    let stem = stem_of(body);
+    let is_self = |name: &str| current.is_some_and(|c| c.eq_ignore_ascii_case(name));
+    let free = |name: &str| is_self(name) || !dirs.iter().any(|d| d.join(name).exists());
 
-    let candidate = format!("{base}.md");
-    if !dir.join(&candidate).exists() {
+    let candidate = format!("{stem}.md");
+    if free(&candidate) {
         return candidate;
     }
     for n in 2.. {
-        let candidate = format!("{base}_{n}.md");
-        if !dir.join(&candidate).exists() {
+        let candidate = format!("{stem} ({n}).md");
+        if free(&candidate) {
             return candidate;
         }
     }
     unreachable!("filename suffix search is unbounded")
 }
 
-fn first_line(body: &str) -> &str {
-    body.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim()
-}
-
-fn slugify(line: &str) -> String {
+fn stem_of(body: &str) -> String {
+    let line = super::title_line(body).map_or("", |(_, l)| l);
     let cleaned: String = line
         .chars()
         .map(|c| if ILLEGAL.contains(&c) || c.is_control() { ' ' } else { c })
         .collect();
     let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    collapsed.chars().take(SLUG_MAX).collect()
+    let capped: String = collapsed.chars().take(NAME_MAX).collect();
+    // Windows silently drops trailing dots/spaces, which would make the name
+    // we return differ from the one actually on disk.
+    let trimmed = capped.trim_end_matches(['.', ' ']);
+    if trimmed.is_empty() {
+        UNTITLED.to_string()
+    } else if RESERVED.iter().any(|r| r.eq_ignore_ascii_case(trimmed)) {
+        format!("{trimmed}_")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
-    fn scratch_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("rnote-naming-test-{:?}", std::thread::current().id()));
+    fn test_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("rnote-naming-test-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     #[test]
-    fn strips_illegal_characters_and_caps_length() {
-        let when = Local.with_ymd_and_hms(2026, 8, 26, 14, 30, 12).unwrap();
-        let dir = scratch_dir();
-        let name = generate("con:tent? \"quote\" <tag> | pipe", when, &dir);
-        assert!(!name.contains([':', '?', '"', '<', '>', '|']));
-        assert!(name.starts_with("2026-08-26_1430 - "));
+    fn name_is_the_title_without_illegal_characters() {
+        let dir = test_dir("illegal");
+        let name = generate("con:tent? \"quote\" <tag> | pipe\nbody", &[&dir], None);
+        assert_eq!(name, "con tent quote tag pipe.md");
     }
 
     #[test]
-    fn avoids_same_minute_collisions() {
-        let when = Local.with_ymd_and_hms(2026, 8, 26, 14, 30, 12).unwrap();
-        let dir = scratch_dir();
-        let first = generate("same body", when, &dir);
-        std::fs::write(dir.join(&first), "x").unwrap();
-        let second = generate("same body", when, &dir);
-        assert_ne!(first, second);
+    fn heading_marker_trailing_dots_and_reserved_names() {
+        let dir = test_dir("heading");
+        assert_eq!(generate("# 買い物\n牛乳", &[&dir], None), "買い物.md");
+        assert_eq!(generate("end...", &[&dir], None), "end.md");
+        assert_eq!(generate("con", &[&dir], None), "con_.md");
+        assert_eq!(generate("\n\n", &[&dir], None), "無題.md");
+    }
+
+    #[test]
+    fn collisions_are_checked_across_every_dir_but_not_against_itself() {
+        let keep = test_dir("collide-keep");
+        let scratch = test_dir("collide-scratch");
+        std::fs::write(keep.join("memo.md"), "x").unwrap();
+        assert_eq!(generate("memo", &[&keep, &scratch], None), "memo (2).md");
+        assert_eq!(generate("memo", &[&keep, &scratch], Some("memo.md")), "memo.md");
+        assert_eq!(generate("MEMO", &[&keep, &scratch], Some("memo.md")), "MEMO.md");
     }
 }

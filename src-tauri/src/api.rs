@@ -220,6 +220,12 @@ fn daily_endpoint(handle: &AppHandle, body: &Value) -> Result<String, RouteError
         return Err(RouteError::Bad("\"content\" is empty".into()));
     }
 
+    // Each request runs on its own thread, and this is a read-modify-write:
+    // without the lock, two appends landing together would each read the
+    // old file and the second write would silently drop the first entry.
+    static DAILY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = DAILY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     let state = handle.state::<AppState>();
     let (notes_dir, expiry_days) = {
         let s = state.config.read();
@@ -256,7 +262,7 @@ fn daily_endpoint(handle: &AppHandle, body: &Value) -> Result<String, RouteError
         } else {
             notes.push(note.clone());
         }
-        notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        crate::notes::sort_newest(&mut notes);
     }
 
     let mut value = serde_json::to_value(&note).unwrap_or(Value::Null);
@@ -314,7 +320,7 @@ fn create_endpoint(handle: &AppHandle, body: &Value) -> Result<String, RouteErro
     {
         let mut notes = state.notes.write();
         notes.push(note.clone());
-        notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        crate::notes::sort_newest(&mut notes);
     }
 
     let mut value = serde_json::to_value(&note).unwrap_or(Value::Null);
@@ -353,8 +359,12 @@ fn notes_endpoint(handle: &AppHandle, params: &HashMap<String, String>) -> Strin
     };
 
     let state = handle.state::<AppState>();
-    let notes_dir = state.config.read().notes_dir.clone();
-    let all = apply(&state.notes.read(), &filter);
+    let (notes_dir, expiry_days) = {
+        let s = state.config.read();
+        (s.notes_dir.clone(), s.expiry_days)
+    };
+    let mut all = apply(&state.notes.read(), &filter);
+    crate::notes::scan::refresh_expiry(&mut all, expiry_days);
     let total = all.len();
     let items: Vec<serde_json::Value> = all
         .into_iter()

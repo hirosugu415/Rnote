@@ -34,9 +34,65 @@ pub const MINIMIZED_FLAG: &str = "--minimized";
 /// `WINDOW_HIDING` notice can never be skipped.
 pub fn hide_window(app: &AppHandle) {
     let _ = app.emit(WINDOW_HIDING, ());
+    save_window_geometry(app);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
+}
+
+/// Records where the window is, so the next launch puts it back there.
+/// Called on every hide (which covers hotkey, blur, close, Esc) and on exit.
+fn save_window_geometry(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+        return;
+    };
+    if size.width == 0 || size.height == 0 {
+        return;
+    }
+    let geometry = config::WindowGeometry { x: pos.x, y: pos.y, width: size.width, height: size.height };
+    if let Err(e) = config::save_window_geometry(&geometry) {
+        eprintln!("[window] could not save geometry: {e}");
+    }
+}
+
+/// Puts the window back where it was last time — unless that spot is no
+/// longer on any monitor (a display was unplugged, resolution changed), in
+/// which case the default centred placement stays, so it can't open
+/// somewhere invisible.
+fn restore_window_geometry(app: &AppHandle) {
+    let (Some(window), Some(g)) = (app.get_webview_window("main"), config::load_window_geometry())
+    else {
+        return;
+    };
+    // Require a reasonable chunk of the window (its top strip, where it's
+    // grabbed from) to land on some monitor.
+    const MIN_VISIBLE: i32 = 80;
+    let visible = window.available_monitors().unwrap_or_default().iter().any(|m| {
+        let (mp, ms) = (m.position(), m.size());
+        let overlap_x = (g.x + g.width as i32).min(mp.x + ms.width as i32) - g.x.max(mp.x);
+        let top_on_screen = g.y >= mp.y && g.y + 20 <= mp.y + ms.height as i32;
+        overlap_x >= MIN_VISIBLE && top_on_screen
+    });
+    if !visible {
+        return;
+    }
+    let _ = window.set_size(tauri::PhysicalSize::new(g.width, g.height));
+    let _ = window.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+}
+
+/// Applies a UI zoom level, clamped to the supported range.
+pub(crate) fn apply_zoom(app: &AppHandle, zoom: f64) -> f64 {
+    let zoom = ((zoom.clamp(config::ZOOM_MIN, config::ZOOM_MAX)) * 100.0).round() / 100.0;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_zoom(zoom);
+    }
+    zoom
 }
 
 pub fn toggle_window(app: &AppHandle) {
@@ -59,6 +115,28 @@ pub fn show_window(app: &AppHandle) {
     let _ = window.show();
     let _ = window.set_focus();
     let _ = app.emit(FOCUS_COMPOSE, ());
+}
+
+/// Makes the Windows sign-in entry (`HKCU\...\Run`, written by the autostart
+/// plugin with `--minimized`) match the setting. Enabling is redone on every
+/// boot rather than only when missing, so the entry follows the exe if the
+/// app was reinstalled somewhere else.
+///
+/// Skipped in debug builds: `npm run tauri dev` would otherwise register the
+/// throwaway `target\debug` binary to start at every sign-in.
+pub(crate) fn sync_autostart(app: &AppHandle, wanted: bool) -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    if wanted {
+        launcher.enable().map_err(|e| format!("could not enable autostart: {e}"))
+    } else if launcher.is_enabled().unwrap_or(false) {
+        launcher.disable().map_err(|e| format!("could not disable autostart: {e}"))
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn register_hotkey(app: &AppHandle, accelerator: &str) -> Result<(), String> {
@@ -192,6 +270,9 @@ pub fn run() {
         .manage(AppState::new(cfg, notes))
         .invoke_handler(tauri::generate_handler![
             commands::list_notes,
+            commands::list_tags,
+            commands::rename_tag,
+            commands::set_zoom,
             commands::get_note,
             commands::create_note,
             commands::update_note,
@@ -205,8 +286,19 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            let hotkey = app.state::<AppState>().config.read().hotkey.clone();
+            let (hotkey, autostart, zoom) = {
+                let state = app.state::<AppState>();
+                let cfg = state.config.read();
+                (cfg.hotkey.clone(), cfg.autostart, cfg.zoom)
+            };
+            restore_window_geometry(&handle);
+            if zoom != 1.0 {
+                apply_zoom(&handle, zoom);
+            }
             if let Err(e) = register_hotkey(&handle, &hotkey) {
+                eprintln!("[boot] {e}");
+            }
+            if let Err(e) = sync_autostart(&handle, autostart) {
                 eprintln!("[boot] {e}");
             }
             build_tray(&handle)?;
@@ -234,11 +326,12 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building Rnote")
-        .run(|_app, event| {
-            // Rnote persists every note on write, so there is nothing else to do
-            // on exit — this arm exists only to retire the API service file.
-            if let RunEvent::Exit = event {
-                api::remove_service_file();
-            }
+        .run(|app, event| match event {
+            // Notes are persisted on every write; on the way out only the
+            // window's spot (if it's showing) and the API registry entry
+            // need handling.
+            RunEvent::ExitRequested { .. } => save_window_geometry(app),
+            RunEvent::Exit => api::remove_service_file(),
+            _ => {}
         });
 }

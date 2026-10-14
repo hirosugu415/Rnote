@@ -1,37 +1,42 @@
 import { useEffect, useRef, useState } from "react";
-import { listNotes, type NoteSummary, type Status } from "../api";
+import { searchTerms, type NoteSummary, type Status, type TagCount } from "../api";
 import NoteList from "./NoteList";
+import TagCloud from "./TagCloud";
 
 interface Props {
   notes: NoteSummary[];
+  /** Every tag across every note, most used first. */
+  tags: TagCount[];
   query: string;
   onQueryChange: (query: string) => void;
   statusFilter: Status | "all";
   onStatusFilterChange: (status: Status | "all") => void;
   onOpenSettings: () => void;
+  /** Expiring scratch notes — shown on the triage button. */
+  expiringCount: number;
+  onOpenTriage: () => void;
   onOpenNote: (note: NoteSummary) => void;
   onToggleStatus: (note: NoteSummary) => void;
   onDelete: (filename: string) => void;
-}
-
-interface TagCount {
-  tag: string;
-  count: number;
+  onRenameTag: (from: string, to: string) => Promise<string | null>;
 }
 
 export default function SearchView({
   notes,
+  tags,
   query,
   onQueryChange,
   statusFilter,
   onStatusFilterChange,
   onOpenSettings,
+  expiringCount,
+  onOpenTriage,
   onOpenNote,
   onToggleStatus,
   onDelete,
+  onRenameTag,
 }: Props) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [tagCounts, setTagCounts] = useState<TagCount[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   // While an IME is composing, the input's own value must not be clobbered
   // by a re-render — only the committed text (on compositionend) should
@@ -42,34 +47,19 @@ export default function SearchView({
     setSelectedIndex(0);
   }, [query, statusFilter]);
 
+  // The list can shrink under the cursor (a delete, a watcher refresh).
+  useEffect(() => {
+    setSelectedIndex((i) => Math.max(0, Math.min(i, notes.length - 1)));
+  }, [notes.length]);
+
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  // A lightweight tag browser — every tag across every note, not just the
-  // current (possibly filtered) result set, so it works as an entry point
-  // into a topic even before typing anything. Fetched once per visit to
-  // this screen; re-entering (Ctrl+F) refreshes it for free.
-  useEffect(() => {
-    listNotes({})
-      .then((all) => {
-        const counts = new Map<string, number>();
-        for (const note of all) {
-          for (const tag of note.tags) {
-            counts.set(tag, (counts.get(tag) ?? 0) + 1);
-          }
-        }
-        const sorted = Array.from(counts.entries())
-          .map(([tag, count]) => ({ tag, count }))
-          .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
-        setTagCounts(sorted);
-      })
-      .catch(() => {});
-  }, []);
 
   const handleTagClick = (tag: string) => {
     onStatusFilterChange("all");
-    onQueryChange(tag);
+    onQueryChange(`#${tag}`);
     inputRef.current?.focus();
   };
 
@@ -77,6 +67,13 @@ export default function SearchView({
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
+    if (e.ctrlKey && !e.shiftKey && (e.key === "f" || e.key === "F")) {
+      e.preventDefault();
+      inputRef.current?.focus();
+      inputRef.current?.select();
+      return;
+    }
 
     if (e.ctrlKey && (e.key === "k" || e.key === "K")) {
       e.preventDefault();
@@ -107,6 +104,9 @@ export default function SearchView({
 
   return (
     <div className="search-view" onKeyDown={onKeyDown}>
+      <div className="view-title" data-drag-region>
+        検索
+      </div>
       <div className="searchbar">
         <input
           ref={inputRef}
@@ -135,24 +135,22 @@ export default function SearchView({
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          className="chip triage-open"
+          title="Scratch を1件ずつ Keep / ゴミ箱 / あとで に振り分ける"
+          onClick={onOpenTriage}
+        >
+          整理
+          {expiringCount > 0 && <span className="triage-open-count">{expiringCount}</span>}
+        </button>
         <button className="gear" title="Settings (Ctrl+,)" onClick={onOpenSettings}>
           ⚙
         </button>
       </div>
 
-      {query.trim() === "" && tagCounts.length > 0 && (
-        <div className="tag-cloud">
-          {tagCounts.map(({ tag, count }) => (
-            <button
-              key={tag}
-              type="button"
-              className="tag-pill tag-cloud-pill"
-              onClick={() => handleTagClick(tag)}
-            >
-              #{tag} <span className="tag-count">{count}</span>
-            </button>
-          ))}
-        </div>
+      {query.trim() === "" && tags.length > 0 && (
+        <TagCloud tags={tags} onTagClick={handleTagClick} onRenameTag={onRenameTag} />
       )}
 
       <NoteList
@@ -165,6 +163,7 @@ export default function SearchView({
         onToggleStatus={onToggleStatus}
         onDelete={onDelete}
         onTagClick={handleTagClick}
+        highlight={searchTerms(query)}
       />
     </div>
   );

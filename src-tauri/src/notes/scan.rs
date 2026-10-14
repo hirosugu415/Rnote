@@ -28,11 +28,26 @@ fn parse_filename_timestamp(filename: &str) -> Option<DateTime<Local>> {
 /// line changed later (or one first saved while that line was just `#`) would
 /// keep a stale title forever.
 fn title_of(body: &str) -> String {
-    body.lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map(str::to_string)
+    super::title_line(body)
+        .map(|(_, l)| l.to_string())
         .unwrap_or_else(|| "(無題)".to_string())
+}
+
+/// Whether a scratch note created at `created_at` has passed `expiry_days`.
+/// Also recomputed at list time (see `refresh_expiry`), since the app runs
+/// for weeks from autostart and a value frozen at scan time goes stale.
+fn is_expiring(status: Status, created_at: &DateTime<Local>, expiry_days: u32) -> bool {
+    status == Status::Scratch
+        && Local::now().signed_duration_since(*created_at).num_days() >= expiry_days as i64
+}
+
+/// Re-derives `is_expiring` on list results against the current clock.
+pub fn refresh_expiry(summaries: &mut [super::NoteSummary], expiry_days: u32) {
+    for s in summaries {
+        if let Ok(t) = DateTime::parse_from_rfc3339(&s.created_at) {
+            s.is_expiring = is_expiring(s.status, &t.with_timezone(&Local), expiry_days);
+        }
+    }
 }
 
 pub(crate) fn scan_one(path: &Path, status: Status, expiry_days: u32) -> std::io::Result<Note> {
@@ -50,8 +65,7 @@ pub(crate) fn scan_one(path: &Path, status: Status, expiry_days: u32) -> std::io
     let modified_at = meta.modified().ok().map(DateTime::<Local>::from).unwrap_or(created_at);
 
     let tags = tags::extract(&body);
-    let is_expiring = status == Status::Scratch
-        && Local::now().signed_duration_since(created_at).num_days() >= expiry_days as i64;
+    let is_expiring = is_expiring(status, &created_at, expiry_days);
 
     Ok(Note {
         title: title_of(&body),
@@ -97,6 +111,6 @@ pub fn scan_all(settings: &Settings) -> Vec<Note> {
 
     let mut notes = scan_dir(&keep_dir, Status::Keep, settings.expiry_days);
     notes.extend(scan_dir(&scratch_dir, Status::Scratch, settings.expiry_days));
-    notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    super::sort_newest(&mut notes);
     notes
 }

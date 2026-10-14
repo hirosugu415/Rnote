@@ -39,10 +39,29 @@ export interface Settings {
   expiryDays: number;
   lastStatus: Status;
   indentWidth: number;
+  autostart: boolean;
+  zoom: number;
 }
+
+export interface TagCount {
+  tag: string;
+  /** Number of notes carrying the tag. */
+  count: number;
+}
+
+/** Mirrors `commands::NOTE_GONE` — the error for a note no longer on disk. */
+export const NOTE_GONE = "that note is gone";
 
 export const listNotes = (filter: NoteFilter) =>
   invoke<NoteSummary[]>("list_notes", { filter });
+
+/** Every tag across all notes, most used first. */
+export const listTags = () => invoke<TagCount[]>("list_tags");
+
+/** Rewrites `#from` to `#to` in every note (a merge if `to` exists);
+ *  resolves to the number of notes changed. */
+export const renameTag = (from: string, to: string) =>
+  invoke<number>("rename_tag", { from, to });
 
 export const getNote = (filename: string) => invoke<Note>("get_note", { filename });
 
@@ -63,9 +82,12 @@ export const getSettings = () => invoke<Settings>("get_settings");
 
 export const setSettings = (next: Settings) => invoke<Settings>("set_settings", { next });
 
+/** Sets and persists the UI zoom; resolves to the value actually applied. */
+export const setZoom = (zoom: number) => invoke<number>("set_zoom", { zoom });
+
 export const hideWindow = () => invoke<void>("hide_window");
 
-function isTagChar(ch: string): boolean {
+export function isTagChar(ch: string): boolean {
   return /[\p{L}\p{N}_-]/u.test(ch);
 }
 
@@ -93,6 +115,16 @@ export function extractTags(body: string): string[] {
     i++;
   }
   return tags;
+}
+
+/** The search box's text as highlightable terms: whitespace-separated,
+ *  with a leading `#` dropped (`#仕事` should light up `仕事` too). */
+export function searchTerms(query: string): string[] {
+  return query
+    .trim()
+    .split(/\s+/)
+    .map((t) => t.replace(/^#+/, ""))
+    .filter(Boolean);
 }
 
 /**
